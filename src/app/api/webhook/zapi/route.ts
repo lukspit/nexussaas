@@ -45,6 +45,7 @@ export async function POST(req: Request) {
                 data: {
                     instance_uuid: string;
                     zapi_token: string;
+                    client_token: string | null;
                     clinic_name: string;
                     clinic_rules: string;
                     clinic_specialties: string;
@@ -118,9 +119,15 @@ Diretrizes obrigatórias:
 
         // 7. Envia a Resposta Final de volta para o Aparelho correto na Z-API
         const zapiUrl = `https://api.z-api.io/instances/${instanceId}/token/${contextData.zapi_token}/send-text`;
+        
+        const fetchHeaders: any = { 'Content-Type': 'application/json' };
+        if (contextData.client_token) {
+            fetchHeaders['Client-Token'] = contextData.client_token;
+        }
+
         const zapiReq = await fetch(zapiUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: fetchHeaders,
             body: JSON.stringify({
                 phone: phone,
                 message: aiResponse
