@@ -28,6 +28,7 @@ export default async function SettingsPage() {
             specialties: formData.get('specialties') as string,
             consultation_fee: parseFloat(formData.get('fee') as string) || 0,
             rules: formData.get('rules') as string,
+            assistant_name: (formData.get('assistant_name') as string) || 'Liz',
             owner_id: user.id
         }
 
@@ -66,6 +67,20 @@ export default async function SettingsPage() {
                 <CardContent>
                     <form action={saveClinicData} className="space-y-6">
                         <div className="space-y-4">
+                            <div className="grid gap-2">
+                                <Label htmlFor="assistant_name">Nome da Assistente Virtual</Label>
+                                <Input
+                                    id="assistant_name"
+                                    name="assistant_name"
+                                    defaultValue={clinic?.assistant_name || 'Liz'}
+                                    placeholder="Ex: Liz, Ana, Clara..."
+                                    className="bg-background/50"
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Este é o nome que a IA usará para se apresentar aos pacientes no WhatsApp.
+                                </p>
+                            </div>
+
                             <div className="grid gap-2">
                                 <Label htmlFor="name">Nome da Clínica ou Doutor</Label>
                                 <Input
