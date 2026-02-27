@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Settings, MessageSquare, LogOut, MessageCircle } from 'lucide-react'
+import { LayoutDashboard, Settings, MessageSquare, LogOut, MessageCircle, Blocks } from 'lucide-react'
 
 interface DashboardSidebarProps {
     email?: string;
@@ -28,6 +28,12 @@ export function DashboardSidebar({ email }: DashboardSidebarProps) {
             name: 'Conexão WhatsApp',
             href: '/dashboard/whatsapp',
             icon: MessageSquare,
+            exact: false
+        },
+        {
+            name: 'Integrações',
+            href: '/dashboard/integrations',
+            icon: Blocks,
             exact: false
         },
         {
