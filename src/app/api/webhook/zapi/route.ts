@@ -59,6 +59,34 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Instance or Clinic not found in our Database' }, { status: 404 });
         }
 
+        const fetchHeaders: any = { 'Content-Type': 'application/json' };
+        if (contextData.client_token) {
+            fetchHeaders['Client-Token'] = contextData.client_token;
+        }
+
+        // ==========================================
+        // HUMANIZAÇÃO - ESTÁGIO 1 & 2 (Pausa e Visto Azul)
+        // ==========================================
+        // Delay proposital de 1.5s simulando humano "abrindo o Whatsapp"
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        if (body.messageId) {
+            try {
+                const readUrl = `https://api.z-api.io/instances/${instanceId}/token/${contextData.zapi_token}/read-message`;
+                await fetch(readUrl, {
+                    method: 'POST',
+                    headers: fetchHeaders,
+                    body: JSON.stringify({
+                        phone: phone,
+                        messageId: body.messageId
+                    })
+                });
+            } catch (e) {
+                console.error('Ops, falha ao tentar dar os Blue Ticks na Z-API:', e);
+            }
+        }
+        // ==========================================
+
         // 2. Resgata a Memória (Histórico) das últimas 10 mensagens desse paciente
         const { data: history } = await supabase
             .from('messages')
@@ -119,11 +147,6 @@ Diretrizes obrigatórias:
 
         // 7. Envia a Resposta Final de volta para o Aparelho correto na Z-API
         const zapiUrl = `https://api.z-api.io/instances/${instanceId}/token/${contextData.zapi_token}/send-text`;
-
-        const fetchHeaders: any = { 'Content-Type': 'application/json' };
-        if (contextData.client_token) {
-            fetchHeaders['Client-Token'] = contextData.client_token;
-        }
 
         // Calcula o delay de digitação dinâmico (mínimo 2s, máximo 15s, média de 1s para cada 15 caracteres)
         const typingDelay = Math.max(2, Math.min(15, Math.ceil(aiResponse.length / 15)));
