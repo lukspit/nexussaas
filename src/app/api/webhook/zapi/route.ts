@@ -16,6 +16,91 @@ const openai = new OpenAI({
     apiKey: process.env.OPENROUTER_API_KEY,
 });
 
+// --- FUNÇÕES DE CHUNKING (N8N Legacy convertidas para TS) ---
+const TAMANHO_IDEAL = 250;
+const TAMANHO_MAX = 400;
+const HARD_LIMIT = 800;
+
+function protegerURLs(texto: string) {
+    return texto.replace(/(https?:\/\/[^\s]+)/g, (url) => url.replace(/\./g, '___PONTO_URL___'));
+}
+function restaurarURLs(texto: string) {
+    return texto.replace(/___PONTO_URL___/g, '.');
+}
+
+function protegerAbreviacoes(texto: string) {
+    const abreviacoes = ['Dr.', 'Dra.', 'Sr.', 'Sra.', 'Jr.', 'Prof.', 'Profa.', 'etc.', 'ex.', 'obs.', 'pág.', 'tel.', 'cel.', 'min.', 'máx.', 'aprox.', 'nº.'];
+    let resultado = texto;
+    abreviacoes.forEach(abrev => {
+        const regex = new RegExp(abrev.replace('.', '\\.'), 'gi');
+        resultado = resultado.replace(regex, abrev.replace('.', '___PONTO___'));
+    });
+    return resultado;
+}
+function restaurarAbreviacoes(texto: string) {
+    return texto.replace(/___PONTO___/g, '.');
+}
+
+function protegerListasNumeradas(texto: string) {
+    return texto.replace(/(\d+)\.\s/g, '$1___PONTO___ ');
+}
+
+function encontrarPontoDeCorte(texto: string, limiteMinimo: number) {
+    const pontosFrase = /[.!?](\s*(\p{Emoji_Presentation}|\p{Emoji}\uFE0F))*/gu;
+    let melhorCorte = -1;
+    let match;
+    while ((match = pontosFrase.exec(texto)) !== null) {
+        const fimDoMatch = match.index + match[0].length;
+        if (fimDoMatch >= limiteMinimo) {
+            melhorCorte = fimDoMatch;
+            if (fimDoMatch >= TAMANHO_IDEAL) break;
+        }
+    }
+    return melhorCorte;
+}
+
+function chunkMessage(mensagem: string): string[] {
+    if (!mensagem || mensagem.trim().length === 0) return [];
+
+    let texto = protegerURLs(mensagem);
+    texto = protegerAbreviacoes(texto);
+    texto = protegerListasNumeradas(texto);
+
+    const linhas = texto.split(/\n/).filter(l => l.trim().length > 0);
+    const textoUnificado = linhas.join('\n');
+
+    const partes: string[] = [];
+    let restante = textoUnificado;
+
+    while (restante.trim().length > 0) {
+        if (restante.length <= TAMANHO_MAX) {
+            partes.push(restante.trim());
+            break;
+        }
+        const janela = restante.substring(0, TAMANHO_MAX);
+        let corte = encontrarPontoDeCorte(janela, 120);
+        if (corte > 0) {
+            partes.push(restante.substring(0, corte).trim());
+            restante = restante.substring(corte).trim();
+        } else {
+            const janelaExpandida = restante.substring(0, HARD_LIMIT);
+            corte = encontrarPontoDeCorte(janelaExpandida, 120);
+            if (corte > 0) {
+                partes.push(restante.substring(0, corte).trim());
+                restante = restante.substring(corte).trim();
+            } else {
+                let corteEmergencia = janela.lastIndexOf('\n');
+                if (corteEmergencia <= 120) corteEmergencia = janela.lastIndexOf(' ');
+                if (corteEmergencia <= 120) corteEmergencia = TAMANHO_MAX;
+                partes.push(restante.substring(0, corteEmergencia).trim());
+                restante = restante.substring(corteEmergencia).trim();
+            }
+        }
+    }
+    return partes.map(parte => restaurarURLs(restaurarAbreviacoes(parte.trim())));
+}
+// -------------------------------------------------------------
+
 export async function POST(req: Request) {
     try {
         const body = await req.json();
@@ -145,25 +230,37 @@ Diretrizes obrigatórias:
             });
         }
 
-        // 7. Envia a Resposta Final de volta para o Aparelho correto na Z-API
+        // 7. Envia a Resposta Final de volta para o Aparelho correto na Z-API (Streaming Fake em Chunks)
         const zapiUrl = `https://api.z-api.io/instances/${instanceId}/token/${contextData.zapi_token}/send-text`;
 
-        // Calcula o delay de digitação dinâmico (mínimo 2s, máximo 15s, média de 1s para cada 15 caracteres)
-        const typingDelay = Math.max(2, Math.min(15, Math.ceil(aiResponse.length / 15)));
+        const chunks = chunkMessage(aiResponse);
+        let accumulatedDelayMessage = 0; // O primeiro pedaço vai instantaneamente (após os cálculos da Vercel)
 
-        const zapiReq = await fetch(zapiUrl, {
-            method: 'POST',
-            headers: fetchHeaders,
-            body: JSON.stringify({
+        const dispatchPromises = chunks.map((chunk, index) => {
+            // Calcula math randomico ou formula exata de envio (ex: 1s a cada 15 char, limit. 15)
+            const typingDelay = Math.max(2, Math.min(15, Math.ceil(chunk.length / 15)));
+            const payload = {
                 phone: phone,
-                message: aiResponse,
-                delayTyping: typingDelay
-            })
+                message: chunk,
+                delayMessage: accumulatedDelayMessage, // Acumula de quando começar a PENSAR pra essa msg (evita encavalar)
+                delayTyping: typingDelay                // Fica "digitando" depois que der o tempo de atraso
+            };
+
+            // Para que o próximo balão só comece a piscar "digitando..." APÓS ESTE balão atual ser ENVIADO de fato
+            // Atraso Próximo Balão = Tempo da fila dele + O tempo em que digitou o anterior + 1 segundo (Respiro humano extra)
+            accumulatedDelayMessage += (typingDelay + 1);
+
+            return fetch(zapiUrl, {
+                method: 'POST',
+                headers: fetchHeaders,
+                body: JSON.stringify(payload)
+            }).then(async (res) => {
+                if (!res.ok) console.error(`[ZAPI Chunk ${index}] Erro:`, await res.text());
+            }).catch(err => console.error(`[ZAPI Chunk ${index}] Rede Error:`, err));
         });
 
-        if (!zapiReq.ok) {
-            console.error('Falha ao despachar na Z-API:', await zapiReq.text());
-        }
+        // Aguarda todas as requisições paralelas sumirem para a ZAPI mas NUNCA encavala o processo serverless (Serverless Vercel resolve na hora)
+        await Promise.all(dispatchPromises);
 
         return NextResponse.json({ success: true, ai_response_length: aiResponse.length });
 
