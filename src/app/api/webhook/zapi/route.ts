@@ -119,18 +119,22 @@ Diretrizes obrigatórias:
 
         // 7. Envia a Resposta Final de volta para o Aparelho correto na Z-API
         const zapiUrl = `https://api.z-api.io/instances/${instanceId}/token/${contextData.zapi_token}/send-text`;
-        
+
         const fetchHeaders: any = { 'Content-Type': 'application/json' };
         if (contextData.client_token) {
             fetchHeaders['Client-Token'] = contextData.client_token;
         }
+
+        // Calcula o delay de digitação dinâmico (mínimo 2s, máximo 15s, média de 1s para cada 15 caracteres)
+        const typingDelay = Math.max(2, Math.min(15, Math.ceil(aiResponse.length / 15)));
 
         const zapiReq = await fetch(zapiUrl, {
             method: 'POST',
             headers: fetchHeaders,
             body: JSON.stringify({
                 phone: phone,
-                message: aiResponse
+                message: aiResponse,
+                delayTyping: typingDelay
             })
         });
 
