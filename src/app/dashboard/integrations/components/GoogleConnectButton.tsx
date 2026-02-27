@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Calendar, Loader2, CheckCircle2 } from 'lucide-react'
-
+import { CalendarSelector } from './CalendarSelector'
 export function GoogleConnectButton({ isConnected }: { isConnected: boolean }) {
     const [isLoading, setIsLoading] = useState(false)
     const supabase = createClient()
@@ -35,7 +35,10 @@ export function GoogleConnectButton({ isConnected }: { isConnected: boolean }) {
                 <CheckCircle2 className="w-12 h-12 text-green-500" />
                 <div className="text-center">
                     <h3 className="font-semibold text-green-400">Google Calendar Conectado!</h3>
-                    <p className="text-sm text-green-500/80">A inteligência artificial já tem acesso de leitura e escrita para agendar suas consultas.</p>
+                    <p className="text-sm text-green-500/80 mb-6">A IA já tem acesso de permissão para ler sua conta.</p>
+                </div>
+                <div className="w-full max-w-2xl border-t border-green-500/20 pt-4">
+                    <CalendarSelector />
                 </div>
             </div>
         )
