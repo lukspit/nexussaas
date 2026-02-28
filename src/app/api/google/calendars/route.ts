@@ -24,7 +24,13 @@ export async function GET(request: Request) {
 
         // Configurar o cliente OAuth2 do Google
         // Mesmo sem o ClientID aqui embaixo configurado perfeitamente na lib, o simple uso do access_token garante a chamada da rest API.
-        const oauth2Client = new google.auth.OAuth2();
+        // A cada 1h o access_token expira! Para que a lib consiga puxar um novo usando o refresh_token,
+        // ela precisa saber o Client ID e Secret do projeto.
+        const oauth2Client = new google.auth.OAuth2(
+            process.env.GOOGLE_CLIENT_ID,
+            process.env.GOOGLE_CLIENT_SECRET
+        );
+        
         oauth2Client.setCredentials({
             access_token: clinic.google_access_token,
             refresh_token: clinic.google_refresh_token,
@@ -51,7 +57,10 @@ export async function GET(request: Request) {
 
     } catch (error: any) {
         console.error('Error fetching google calendars:', error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+        return NextResponse.json({ 
+            error: 'Internal Server Error', 
+            details: error.message 
+        }, { status: 500 });
     }
 }
 
