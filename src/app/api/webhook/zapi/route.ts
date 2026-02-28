@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import fs from 'fs';
+import { google } from 'googleapis';
 
 // Cliente Supabase com permissões básicas (Anon Key)
 // O RPC 'get_webhook_context' foi criado como SECURITY DEFINER no banco para contornar o RLS de forma isolada e segura.
@@ -156,6 +157,7 @@ function buildSystemPromptV2(context: {
     currentDatetime: string;
     greeting: string;
     isReturningPatient: boolean;
+    hasCalendarTools: boolean;
 }): string {
     const returningContext = context.isReturningPatient
         ? `Este paciente JÁ CONVERSOU antes conosco. NÃO repita a saudação inicial de boas-vindas nem se reapresente. Seja natural como quem retoma uma conversa.`
@@ -177,6 +179,11 @@ ${context.clinic_rules}
 
 === CONTEXTO DO PACIENTE ===
 ${returningContext}
+
+${context.hasCalendarTools ? `=== SUPER PODER: GERENCIAMENTO DE AGENDA ===
+Você TEM a habilidade ativa de consultar a agenda e marcar consultas usando as ferramentas (\`check_availability\` e \`book_appointment\`).
+- SEMPRE valide a disponibilidade primeiro. (Por exemplo, se a pessoa pedir para marcar na quarta de tarde, chame \`check_availability\` para a data de quarta antes de oferecer os horários vazios).
+- Você DEVE chamar \`book_appointment\` para fixar a consulta no sistema quando tiver todos os dados confirmados. Após o sucesso da ferramenta de agendamento, notifique o paciente do agendamento concluído.` : ''}
 
 === FLUXO DE CONVERSA ===
 Siga esta sequência natural:
@@ -355,6 +362,10 @@ export async function POST(req: Request) {
                     clinic_specialties: string;
                     consultation_fee: number;
                     assistant_name: string;
+                    clinic_id: string;
+                    google_access_token: string | null;
+                    google_refresh_token: string | null;
+                    google_calendar_id: string | null;
                 } | null;
                 error: any;
             };
@@ -363,6 +374,26 @@ export async function POST(req: Request) {
             console.error('Error fetching context:', contextError);
             return NextResponse.json({ error: 'Instance or Clinic not found in our Database' }, { status: 404 });
         }
+
+        // --- AUTO-CADASTRO DE PACIENTE (LEAD) ---
+        const { data: existingPatient } = await supabase
+            .from('patients')
+            .select('id')
+            .eq('clinic_id', contextData.clinic_id)
+            .eq('phone_number', phone)
+            .single();
+
+        let patientId = existingPatient?.id;
+
+        if (!existingPatient) {
+            const { data: newPatient } = await supabase.from('patients').insert({
+                clinic_id: contextData.clinic_id,
+                phone_number: phone,
+                status: 'LEAD'
+            }).select('id').single();
+            if (newPatient) patientId = newPatient.id;
+        }
+        // ----------------------------------------
 
         const fetchHeaders: any = { 'Content-Type': 'application/json' };
         if (contextData.client_token) {
@@ -483,6 +514,8 @@ export async function POST(req: Request) {
         const { greeting, datetime } = getBrazilianGreeting();
         const isReturning = allMessages.length > 0;
 
+        const hasCalendarTools = !!(contextData.google_access_token && contextData.google_calendar_id);
+
         const systemPrompt = buildSystemPromptV2({
             assistant_name: contextData.assistant_name || 'Liz',
             clinic_name: contextData.clinic_name,
@@ -492,10 +525,11 @@ export async function POST(req: Request) {
             currentDatetime: datetime,
             greeting: greeting,
             isReturningPatient: isReturning,
+            hasCalendarTools: hasCalendarTools
         });
 
         // 5. Monta o array de mensagens para o LLM
-        const messagesForLLM: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+        const messagesForLLM: Array<{ role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_calls?: any; tool_call_id?: string }> = [
             { role: 'system', content: systemPrompt },
         ];
 
@@ -509,15 +543,148 @@ export async function POST(req: Request) {
         messagesForLLM.push(...recentMessages);
         messagesForLLM.push({ role: 'user', content: userMessage });
 
+        const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [];
+        if (hasCalendarTools) {
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'check_availability',
+                    description: 'Verifica horários ocupados na agenda do Google Calendar da clínica para a data especificada.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            date: { type: 'string', description: 'A data alvo (YYYY-MM-DD)' }
+                        },
+                        required: ['date']
+                    }
+                }
+            });
+            tools.push({
+                type: 'function',
+                function: {
+                    name: 'book_appointment',
+                    description: 'Marca uma consulta médica preenchendo o slot no Google Calendar e nossa base.',
+                    parameters: {
+                        type: 'object',
+                        properties: {
+                            patient_name: { type: 'string', description: 'Nome completo do paciente' },
+                            start_time: { type: 'string', description: 'Hora de início (ISO 8601, ex: 2024-05-20T14:00:00-03:00)' },
+                            end_time: { type: 'string', description: 'Hora de término (ISO 8601, normalmente 1 hora após o check_in)' }
+                        },
+                        required: ['patient_name', 'start_time', 'end_time']
+                    }
+                }
+            });
+        }
+
         // 6. Chamada de Inferência (LLM via OpenRouter)
-        const completion = await openai.chat.completions.create({
+        const payload: any = {
             model: "openai/gpt-4o-mini",
             messages: messagesForLLM,
             temperature: 0.7,
             max_tokens: 500,
-        });
+        };
+        if (tools.length > 0) {
+            payload.tools = tools;
+            payload.tool_choice = 'auto';
+        }
 
-        const aiResponse = completion.choices[0].message.content || '...';
+        let completion = await openai.chat.completions.create(payload);
+        let aiMessage = completion.choices[0].message;
+
+        // Process function calls
+        if (aiMessage.tool_calls) {
+            messagesForLLM.push(aiMessage as any);
+
+            const oauth2Client = new google.auth.OAuth2();
+            if (hasCalendarTools && contextData.google_access_token) {
+                oauth2Client.setCredentials({
+                    access_token: contextData.google_access_token,
+                    refresh_token: contextData.google_refresh_token,
+                });
+
+                // Lidando ativamente com o ciclo de atualização do token localmente seria ideal (via hooks do auth2Client),
+                // para esse escopo básico deixaremos as retentivas padrão configuradas, apenas utilizando credenciais salvas.
+            }
+            const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+            for (const toolCall of aiMessage.tool_calls) {
+                const funcName = (toolCall as any).function.name;
+                const funcArgs = (toolCall as any).function.arguments;
+
+                if (funcName === 'check_availability') {
+                    const args = JSON.parse(funcArgs);
+                    try {
+                        const timeMin = new Date(`${args.date}T00:00:00-03:00`).toISOString();
+                        const timeMax = new Date(`${args.date}T23:59:59-03:00`).toISOString();
+                        const events = await calendar.events.list({
+                            calendarId: contextData.google_calendar_id as string,
+                            timeMin, timeMax,
+                            singleEvents: true,
+                            orderBy: 'startTime',
+                        });
+                        const busySlots = events.data.items?.map(e => ({
+                            start: e.start?.dateTime || e.start?.date,
+                            end: e.end?.dateTime || e.end?.date,
+                            summary: 'Ocupado'
+                        })) || [];
+                        messagesForLLM.push({
+                            role: 'tool',
+                            tool_call_id: toolCall.id,
+                            content: JSON.stringify({ occupied_slots: busySlots })
+                        });
+                    } catch (e: any) {
+                        messagesForLLM.push({ role: 'tool', tool_call_id: toolCall.id, content: JSON.stringify({ error: e.message }) });
+                    }
+                } else if (funcName === 'book_appointment') {
+                    const args = JSON.parse(funcArgs);
+                    try {
+                        const event = await calendar.events.insert({
+                            calendarId: contextData.google_calendar_id as string,
+                            requestBody: {
+                                summary: `[Nexus] Consulta: ${args.patient_name}`,
+                                description: `Agendado via IA.\nTelefone Paciente: ${phone}`,
+                                start: { dateTime: args.start_time },
+                                end: { dateTime: args.end_time }
+                            }
+                        });
+
+                        // Atualiza no banco
+                        if (patientId) {
+                            await supabase.from('appointments').insert({
+                                clinic_id: contextData.clinic_id,
+                                patient_id: patientId,
+                                scheduled_at: args.start_time,
+                                status: 'CONFIRMED'
+                            });
+                            await supabase.from('patients').update({
+                                name: args.patient_name,
+                                status: 'AGENDADO'
+                            }).eq('id', patientId);
+                        }
+
+                        messagesForLLM.push({
+                            role: 'tool',
+                            tool_call_id: toolCall.id,
+                            content: JSON.stringify({ success: true, eventLink: event.data.htmlLink })
+                        });
+                    } catch (e: any) {
+                        messagesForLLM.push({ role: 'tool', tool_call_id: toolCall.id, content: JSON.stringify({ error: e.message }) });
+                    }
+                }
+            }
+
+            // Segunda chamada para gerar a resposta final ao usuário (ex: "Sua consulta foi agendada!")
+            completion = await openai.chat.completions.create({
+                model: "openai/gpt-4o-mini",
+                messages: messagesForLLM as any,
+                temperature: 0.7,
+                max_tokens: 500,
+            });
+            aiMessage = completion.choices[0].message;
+        }
+
+        const aiResponse = aiMessage.content || '...';
 
         // 7. Salva a Resposta da IA na Memória (Banco)
         if (aiResponse !== '...') {

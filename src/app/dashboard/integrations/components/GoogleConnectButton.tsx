@@ -7,6 +7,7 @@ import { Calendar, Loader2, CheckCircle2 } from 'lucide-react'
 import { CalendarSelector } from './CalendarSelector'
 export function GoogleConnectButton({ isConnected }: { isConnected: boolean }) {
     const [isLoading, setIsLoading] = useState(false)
+    const [isDisconnecting, setIsDisconnecting] = useState(false)
     const supabase = createClient()
 
     const handleConnect = async () => {
@@ -29,6 +30,23 @@ export function GoogleConnectButton({ isConnected }: { isConnected: boolean }) {
         }
     }
 
+    const handleDisconnect = async () => {
+        setIsDisconnecting(true)
+        const { data: { user } } = await supabase.auth.getUser()
+
+        if (user) {
+            await supabase.from('clinics').update({
+                google_access_token: null,
+                google_refresh_token: null,
+                google_calendar_id: null
+            }).eq('owner_id', user.id)
+
+            // Recarrega a página para refletir no back-end
+            window.location.reload()
+        }
+        setIsDisconnecting(false)
+    }
+
     if (isConnected) {
         return (
             <div className="flex flex-col items-center justify-center p-6 border border-green-500/30 bg-green-500/5 rounded-xl space-y-3">
@@ -40,6 +58,15 @@ export function GoogleConnectButton({ isConnected }: { isConnected: boolean }) {
                 <div className="w-full max-w-2xl border-t border-green-500/20 pt-4">
                     <CalendarSelector />
                 </div>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-4 border-red-500/30 text-red-500 hover:bg-red-500/10"
+                    onClick={handleDisconnect}
+                    disabled={isDisconnecting}
+                >
+                    {isDisconnecting ? 'Desconectando...' : 'Desconectar Conta Google'}
+                </Button>
             </div>
         )
     }
