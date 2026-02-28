@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { GoogleConnectButton } from './components/GoogleConnectButton'
 import { CalendarDays } from 'lucide-react'
+import Image from 'next/image'
 
 export default async function IntegrationsPage() {
     const supabase = await createClient()
@@ -36,8 +37,8 @@ export default async function IntegrationsPage() {
                     <div className="absolute top-0 right-0 w-32 h-32 bg-[#4285F4]/10 rounded-full blur-3xl pointer-events-none" />
 
                     <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <CalendarDays className="w-6 h-6 text-[#4285F4]" />
+                        <CardTitle className="flex items-center gap-3">
+                            <Image src="/logos/google_calendar_logo.png" alt="Google Calendar Logo" width={26} height={26} className="object-contain" />
                             Google Calendar
                         </CardTitle>
                         <CardDescription>

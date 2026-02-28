@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { LayoutDashboard, Settings, MessageSquare, LogOut, MessageCircle, Blocks } from 'lucide-react'
 
@@ -46,10 +47,8 @@ export function DashboardSidebar({ email }: DashboardSidebarProps) {
 
     return (
         <aside className="w-64 border-r border-border/40 bg-card/30 backdrop-blur-md hidden md:flex flex-col">
-            <div className="p-6">
-                <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-primary to-primary/50 bg-clip-text text-transparent">
-                    Nexus SaaS
-                </h2>
+            <div className="p-6 flex items-center justify-start h-20">
+                <Image src="/logos/nexus_logo.png" alt="Nexus Logo" width={160} height={48} className="object-contain" priority />
             </div>
 
             <nav className="flex-1 px-4 space-y-2">
