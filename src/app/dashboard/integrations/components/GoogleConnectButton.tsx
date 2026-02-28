@@ -15,7 +15,7 @@ export function GoogleConnectButton({ isConnected }: { isConnected: boolean }) {
         const { error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                scopes: 'https://www.googleapis.com/auth/calendar.events',
+                scopes: 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly',
                 queryParams: {
                     access_type: 'offline',
                     prompt: 'consent'
