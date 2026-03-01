@@ -787,192 +787,203 @@ export async function POST(req: Request) {
         } else if (funcName === "book_appointment") {
           const args = JSON.parse(funcArgs);
           try {
+            // Normaliza o ISO string se o LLM esquecer o TimeZone
+            let isoStart = args.start_time;
+            let isoEnd = args.end_time;
+            if (!isoStart.includes('T') || isoStart.length <= 10) {
+              isoStart = `${isoStart.split('T')[0]}T10:00:00-03:00`; // fallback
+            } else if (!isoStart.includes('-03:00') && !isoStart.includes('Z')) {
+              isoStart = `${isoStart}-03:00`;
+            }
+
+            if (!isoEnd.includes('T') || isoEnd.length <= 10) {
+              isoEnd = `${isoEnd.split('T')[0]}T11:00:00-03:00`; // fallback
+            } else if (!isoEnd.includes('-03:00') && !isoEnd.includes('Z')) {
+              isoEnd = `${isoEnd}-03:00`;
+            }
+
             const event = await calendar.events.insert({
               calendarId: contextData.google_calendar_id as string,
               requestBody: {
                 summary: `[Nexus] Consulta: ${args.patient_name}`,
-                description: `Agendado via IA.\nTelefone Paciente: ${phone}`,
-                start: { dateTime: args.start_time },
-                end: { dateTime: args.end_time },
+                description: `Agendado via IA.\\nTelefone Paciente: ${phone}`,
+                start: { dateTime: new Date(isoStart).toISOString() },
+                end: { dateTime: new Date(isoEnd).toISOString() },
               },
             });
 
             console.log(
-              `[CALENDAR] Sucesso ao agendar para: ${args.patient_name} às ${args.start_time}`,
+              `[CALENDAR] Sucesso ao agendar para: ${args.patient_name} às ${isoStart}`,
             );
-            start: { dateTime: new Date(isoStart).toISOString() },
-            end: { dateTime: new Date(isoEnd).toISOString() },
-          },
-        });
 
-        // Atualiza no banco
-        if (patientId) {
-          await supabase.from("appointments").insert({
-            clinic_id: contextData.clinic_id,
-            patient_id: patientId,
-            scheduled_at: isoStart,
-            status: "CONFIRMED",
-          });
-          await supabase
-            .from("patients")
-            .update({
-              name: args.patient_name,
-              status: "AGENDADO",
-            })
-            .eq("id", patientId);
-        }
+            // Atualiza no banco
+            if (patientId) {
+              await supabase.from("appointments").insert({
+                clinic_id: contextData.clinic_id,
+                patient_id: patientId,
+                scheduled_at: isoStart,
+                status: "CONFIRMED",
+              });
+              await supabase
+                .from("patients")
+                .update({
+                  name: args.patient_name,
+                  status: "AGENDADO",
+                })
+                .eq("id", patientId);
+            }
 
-        messagesForLLM.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: JSON.stringify({
-            success: true,
-            eventLink: event.data.htmlLink,
-          }),
-        });
-      } catch (e: any) {
-        console.error(
-          "[CALENDAR ERROR] Falha no book_appointment:",
-          e.message,
-        );
-        messagesForLLM.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: JSON.stringify({ error: e.message }),
-        });
-      }
-    } else if (funcName === "react_to_message") {
-      const args = JSON.parse(funcArgs);
-      try {
-        if (body.messageId) {
-          const reactUrl = `https://api.z-api.io/instances/${instanceId}/token/${contextData.zapi_token}/send-reaction`;
-          await fetch(reactUrl, {
-            method: "POST",
-            headers: fetchHeaders,
-            body: JSON.stringify({
-              phone: phone,
-              messageId: body.messageId,
-              reaction: args.emoji,
-            }),
-          });
-          console.log(
-            `[REAÇÃO] IA reagiu com ${args.emoji} à mensagem ${body.messageId}`,
-          );
-          messagesForLLM.push({
-            role: "tool",
-            tool_call_id: toolCall.id,
-            content: JSON.stringify({
-              success: `Reagiu com sucesso com o emoji ${args.emoji}`,
-            }),
-          });
-        } else {
-          messagesForLLM.push({
-            role: "tool",
-            tool_call_id: toolCall.id,
-            content: JSON.stringify({
-              error: "Nenhum messageId disponível para reagir.",
-            }),
-          });
+            messagesForLLM.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({
+                success: true,
+                eventLink: event.data.htmlLink,
+              }),
+            });
+          } catch (e: any) {
+            console.error(
+              "[CALENDAR ERROR] Falha no book_appointment:",
+              e.message,
+            );
+            messagesForLLM.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({ error: e.message }),
+            });
+          }
+        } else if (funcName === "react_to_message") {
+          const args = JSON.parse(funcArgs);
+          try {
+            if (body.messageId) {
+              const reactUrl = `https://api.z-api.io/instances/${instanceId}/token/${contextData.zapi_token}/send-reaction`;
+              await fetch(reactUrl, {
+                method: "POST",
+                headers: fetchHeaders,
+                body: JSON.stringify({
+                  phone: phone,
+                  messageId: body.messageId,
+                  reaction: args.emoji,
+                }),
+              });
+              console.log(
+                `[REAÇÃO] IA reagiu com ${args.emoji} à mensagem ${body.messageId}`,
+              );
+              messagesForLLM.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  success: `Reagiu com sucesso com o emoji ${args.emoji}`,
+                }),
+              });
+            } else {
+              messagesForLLM.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  error: "Nenhum messageId disponível para reagir.",
+                }),
+              });
+            }
+          } catch (e: any) {
+            console.error("[REAÇÃO] Erro ao enviar a reação:", e);
+            messagesForLLM.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({
+                error: `Falha ao reagir: ${e.message}`,
+              }),
+            });
+          }
         }
-      } catch (e: any) {
-        console.error("[REAÇÃO] Erro ao enviar a reação:", e);
-        messagesForLLM.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: JSON.stringify({
-            error: `Falha ao reagir: ${e.message}`,
-          }),
-        });
       }
-    }
-  }
 
       // Segunda chamada para gerar a resposta final ao usuário (ex: "Sua consulta foi agendada!")
       completion = await openai.chat.completions.create({
-    model: "openai/gpt-4o-mini",
-    messages: messagesForLLM as any,
-    temperature: 0.7,
-    max_tokens: 500,
-  });
-  let finalMessage = completion.choices[0].message;
+        model: "openai/gpt-4o-mini",
+        messages: messagesForLLM as any,
+        temperature: 0.7,
+        max_tokens: 500,
+      });
+      let finalMessage = completion.choices[0].message;
 
-  // Build pseudo-memory of tools called to persist
-  let memoryString = `[MEMÓRIA DE SISTEMA: Usei ferramentas nesta rodada. ${aiMessage.tool_calls.map((t: any) => t.function.name).join(", ")}]`;
-  const toolResults = messagesForLLM.filter((m) => m.role === "tool");
-  if (toolResults.length > 0) {
-    memoryString += `\nResultados obtidos da agenda: ${toolResults.map((t) => t.content).join(" | ")}`;
-  }
+      // Build pseudo-memory of tools called to persist
+      let memoryString = `[MEMÓRIA DE SISTEMA: Usei ferramentas nesta rodada. ${aiMessage.tool_calls.map((t: any) => t.function.name).join(", ")}]`;
+      const toolResults = messagesForLLM.filter((m) => m.role === "tool");
+      if (toolResults.length > 0) {
+        memoryString += `\nResultados obtidos da agenda: ${toolResults.map((t) => t.content).join(" | ")}`;
+      }
 
-  aiMessage.content = finalMessage.content || "...";
-  // We append the memory to the final saved string, BUT we only send to WhatsApp the actual text
-  const textToSave = `${memoryString}\n\n${aiMessage.content}`;
+      aiMessage.content = finalMessage.content || "...";
+      // We append the memory to the final saved string, BUT we only send to WhatsApp the actual text
+      const textToSave = `${memoryString}\n\n${aiMessage.content}`;
 
-  await supabase.from("messages").insert({
-    instance_id: contextData.instance_uuid,
-    phone_number: phone,
-    role: "assistant",
-    content: textToSave, // Salva histórico turbinado para próximas conversas
-  });
+      await supabase.from("messages").insert({
+        instance_id: contextData.instance_uuid,
+        phone_number: phone,
+        role: "assistant",
+        content: textToSave, // Salva histórico turbinado para próximas conversas
+      });
 
-  aiResponse = aiMessage.content;
-} else {
-  aiResponse = aiMessage.content || "...";
-  // 7. Salva a Resposta da IA na Memória (Banco)
-  if (aiResponse !== "...") {
-    await supabase.from("messages").insert({
-      instance_id: contextData.instance_uuid,
-      phone_number: phone,
-      role: "assistant",
-      content: aiResponse,
+      aiResponse = aiMessage.content;
+    } else {
+      aiResponse = aiMessage.content || "...";
+      // 7. Salva a Resposta da IA na Memória (Banco)
+      if (aiResponse !== "...") {
+        await supabase.from("messages").insert({
+          instance_id: contextData.instance_uuid,
+          phone_number: phone,
+          role: "assistant",
+          content: aiResponse,
+        });
+      }
+    }
+
+    // 8. Envia a Resposta Final de volta para o Aparelho correto na Z-API (Streaming Fake em Chunks)
+    const zapiUrl = `https://api.z-api.io/instances/${instanceId}/token/${contextData.zapi_token}/send-text`;
+
+    const chunks = chunkMessage(aiResponse);
+    let accumulatedDelayMessage = 0;
+
+    const dispatchPromises = chunks.map((chunk, index) => {
+      const typingDelay = Math.max(
+        2,
+        Math.min(15, Math.ceil(chunk.length / 15)),
+      );
+      const payload = {
+        phone: phone,
+        message: chunk,
+        delayMessage: accumulatedDelayMessage,
+        delayTyping: typingDelay,
+      };
+
+      accumulatedDelayMessage += typingDelay + 1;
+
+      return fetch(zapiUrl, {
+        method: "POST",
+        headers: fetchHeaders,
+        body: JSON.stringify(payload),
+      })
+        .then(async (res) => {
+          if (!res.ok)
+            console.error(`[ZAPI Chunk ${index}] Erro:`, await res.text());
+        })
+        .catch((err) =>
+          console.error(`[ZAPI Chunk ${index}] Rede Error:`, err),
+        );
     });
-  }
-}
 
-// 8. Envia a Resposta Final de volta para o Aparelho correto na Z-API (Streaming Fake em Chunks)
-const zapiUrl = `https://api.z-api.io/instances/${instanceId}/token/${contextData.zapi_token}/send-text`;
+    await Promise.all(dispatchPromises);
 
-const chunks = chunkMessage(aiResponse);
-let accumulatedDelayMessage = 0;
-
-const dispatchPromises = chunks.map((chunk, index) => {
-  const typingDelay = Math.max(
-    2,
-    Math.min(15, Math.ceil(chunk.length / 15)),
-  );
-  const payload = {
-    phone: phone,
-    message: chunk,
-    delayMessage: accumulatedDelayMessage,
-    delayTyping: typingDelay,
-  };
-
-  accumulatedDelayMessage += typingDelay + 1;
-
-  return fetch(zapiUrl, {
-    method: "POST",
-    headers: fetchHeaders,
-    body: JSON.stringify(payload),
-  })
-    .then(async (res) => {
-      if (!res.ok)
-        console.error(`[ZAPI Chunk ${index}] Erro:`, await res.text());
-    })
-    .catch((err) =>
-      console.error(`[ZAPI Chunk ${index}] Rede Error:`, err),
-    );
-});
-
-await Promise.all(dispatchPromises);
-
-return NextResponse.json({
-  success: true,
-  ai_response_length: aiResponse.length,
-});
+    return NextResponse.json({
+      success: true,
+      ai_response_length: aiResponse.length,
+    });
   } catch (error) {
-  console.error("Webhook Mestre - Falha Crítica:", error);
-  return NextResponse.json(
-    { error: "Internal Server Error" },
-    { status: 500 },
-  );
-}
+    console.error("Webhook Mestre - Falha Crítica:", error);
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 },
+    );
+  }
 }

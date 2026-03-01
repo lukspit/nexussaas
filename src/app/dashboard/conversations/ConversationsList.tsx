@@ -93,10 +93,10 @@ export function ConversationsList({ leads }: { leads: Lead[] }) {
                                 </span>
                             </div>
 
-                            {selectedLead.messages.map(msg => {
+                            {selectedLead.messages.map((msg, index) => {
                                 const isUser = msg.role === 'user'
                                 return (
-                                    <div key={msg.id || msg.created_at + Math.random()} className={`flex ${isUser ? 'justify-start' : 'justify-end'}`}>
+                                    <div key={msg.id || `${msg.created_at}-${index}`} className={`flex ${isUser ? 'justify-start' : 'justify-end'}`}>
                                         <div className={`max-w-[85%] rounded-lg p-3 relative shadow-md ${isUser ? 'bg-[#202c33] text-[#e9edef] rounded-tl-none border border-white/5' : 'bg-[#005c4b] text-[#e9edef] rounded-tr-none border border-[#005c4b]'}`}>
                                             <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                                             <div className="flex justify-end gap-1 mt-1.5 opacity-80">
